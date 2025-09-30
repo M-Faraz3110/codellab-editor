@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collaborative Editor Test Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+
+        .editor-section {
+            flex: 1;
+        }
+
+        .users-section {
+            width: 200px;
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        #editor {
+            width: 100%;
+            height: 400px;
+            border: 1px solid #ccc;
+            padding: 10px;
+            font-family: monospace;
+            resize: vertical;
+        }
+
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .users-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .users-list li {
+            padding: 5px;
+            margin: 5px 0;
+            background: white;
+            border-radius: 3px;
+        }
+
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .connect-btn {
+            background: #007bff;
+            color: white;
+        }
+
+        .disconnect-btn {
+            background: #dc3545;
+            color: white;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Collaborative Editor Test Client</h1>
+
+    <div class="status" id="status">Disconnected</div>
+
+    <div>
+        <input type="text" id="username" placeholder="Enter your username" value="User1">
+        <input type="text" id="roomId" placeholder="Enter room ID" value="room123">
+        <button class="connect-btn" onclick="connect()">Connect</button>
+        <button class="disconnect-btn" onclick="disconnect()">Disconnect</button>
+    </div>
+
+    <div class="container">
+        <div class="editor-section">
+            <h3>Editor</h3>
+            <textarea id="editor" placeholder="Start typing..."></textarea>
+        </div>
+
+        <div class="users-section">
+            <h3>Connected Users</h3>
+            <ul class="users-list" id="usersList"></ul>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let isConnected = false;
+        let lastContent = '';
+        let cursorPosition = 0;
+
+        function connect() {
+            const username = document.getElementById('username').value || 'Anonymous';
+            const roomId = document.getElementById('roomId').value || 'room123';
+
+            if (ws) {
+                ws.close();
+            }
+
+            ws = new WebSocket(`ws://localhost:8080/ws/${roomId}?username=${encodeURIComponent(username)}`);
+
+            ws.onopen = function () {
+                isConnected = true;
+                updateStatus('Connected', 'connected');
+                console.log('Connected to WebSocket');
+            };
+
+            ws.onmessage = function (event) {
+                const message = JSON.parse(event.data);
+                handleMessage(message);
+            };
+
+            ws.onclose = function () {
+                isConnected = false;
+                updateStatus('Disconnected', 'disconnected');
+                console.log('WebSocket connection closed');
+            };
+
+            ws.onerror = function (error) {
+                console.error('WebSocket error:', error);
+                updateStatus('Connection Error', 'disconnected');
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+            }
+        }
+
+        function updateStatus(text, className) {
+            const status = document.getElementById('status');
+            status.textContent = text;
+            status.className = `status ${className}`;
+        }
+
+        function handleMessage(message) {
+            console.log('Received message:', message);
+
+            switch (message.type) {
+                case 'operation':
+                    handleOperation(message.operation);
+                    break;
+                case 'user_joined':
+                    addUser(message.user);
+                    break;
+                case 'user_left':
+                    removeUser(message.user);
+                    break;
+                case 'pong':
+                    // Handle pong response
+                    break;
+            }
+        }
+
+        function handleOperation(operation) {
+            const editor = document.getElementById('editor');
+            const currentContent = editor.value;
+            const currentPosition = editor.selectionStart;
+
+            // Apply the operation
+            let newContent = currentContent;
+            let newPosition = currentPosition;
+
+            switch (operation.type) {
+                case 'insert':
+                    if (operation.position <= newContent.length) {
+                        newContent = newContent.slice(0, operation.position) +
+                            operation.content +
+                            newContent.slice(operation.position);
+                        if (operation.position <= currentPosition) {
+                            newPosition += operation.content.length;
+                        }
+                    }
+                    break;
+                case 'delete':
+                    if (operation.position + operation.length <= newContent.length) {
+                        newContent = newContent.slice(0, operation.position) +
+                            newContent.slice(operation.position + operation.length);
+                        if (operation.position < currentPosition) {
+                            newPosition = Math.max(operation.position,
+                                currentPosition - operation.length);
+                        }
+                    }
+                    break;
+            }
+
+            // Update editor content
+            editor.value = newContent;
+            editor.setSelectionRange(newPosition, newPosition);
+            lastContent = newContent;
+        }
+
+        function addUser(user) {
+            const usersList = document.getElementById('usersList');
+            const li = document.createElement('li');
+            li.textContent = user.username;
+            li.id = `user-${user.id}`;
+            usersList.appendChild(li);
+        }
+
+        function removeUser(user) {
+            const userElement = document.getElementById(`user-${user.id}`);
+            if (userElement) {
+                userElement.remove();
+            }
+        }
+
+        // Handle editor changes
+        document.getElementById('editor').addEventListener('input', function (e) {
+            if (!isConnected) return;
+
+            const currentContent = e.target.value;
+            const currentPosition = e.target.selectionStart;
+
+            // Calculate the difference
+            const diff = calculateDiff(lastContent, currentContent, cursorPosition);
+
+            if (diff) {
+                sendOperation(diff);
+            }
+
+            lastContent = currentContent;
+            cursorPosition = currentPosition;
+        });
+
+        function calculateDiff(oldContent, newContent, oldPosition) {
+            if (oldContent === newContent) return null;
+
+            // Simple diff calculation
+            if (newContent.length > oldContent.length) {
+                // Text was inserted
+                const insertPosition = oldPosition;
+                const insertedText = newContent.slice(insertPosition, insertPosition + (newContent.length - oldContent.length));
+                return {
+                    type: 'insert',
+                    position: insertPosition,
+                    content: insertedText,
+                    length: 0
+                };
+            } else if (newContent.length < oldContent.length) {
+                // Text was deleted
+                const deletePosition = oldPosition;
+                const deletedLength = oldContent.length - newContent.length;
+                return {
+                    type: 'delete',
+                    position: deletePosition,
+                    content: '',
+                    length: deletedLength
+                };
+            }
+
+            return null;
+        }
+
+        function sendOperation(operation) {
+            if (ws && isConnected) {
+                const message = {
+                    type: 'operation',
+                    operation: operation
+                };
+                ws.send(JSON.stringify(message));
+            }
+        }
+
+        // Initialize
+        document.getElementById('editor').addEventListener('focus', function (e) {
+            cursorPosition = e.target.selectionStart;
+        });
+
+        document.getElementById('editor').addEventListener('click', function (e) {
+            cursorPosition = e.target.selectionStart;
+        });
+    </script>
+</body>
+
+</html>
