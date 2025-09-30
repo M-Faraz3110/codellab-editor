@@ -3,6 +3,7 @@ package room
 import (
 	"encoding/json"
 	"log"
+	"runtime/debug"
 	"sync"
 
 	"collab-editor/pkg/db"
@@ -18,6 +19,21 @@ type Operation struct {
 	Length    int    `json:"length"`    // Length for retain/delete operations
 	ClientID  string `json:"client_id"` // ID of the client that generated this operation
 	Timestamp int64  `json:"timestamp"` // Timestamp for ordering operations
+}
+
+type MetadataUpdate struct {
+	Type      string `json:"type"`
+	Title     string `json:"title"`
+	Language  string `json:"language"`
+	ClientID  string `json:"client_id"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+type Snapshot struct {
+	Type      string `json:"type"`
+	Content   string `json:"content"`
+	ClientID  string `json:"client_id"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 // Client represents a connected client in a room
@@ -60,36 +76,42 @@ func (rm *RoomManager) GetOrCreateRoom(roomID string) (*Room, error) {
 	rm.mutex.Lock()
 	defer rm.mutex.Unlock()
 
-	room, exists := rm.rooms[roomID]
-	if !exists {
-		// Try to get document from storage
-		doc, err := rm.Store.GetDocument(roomID)
-		if err != nil {
-			// Create a new document if it doesn't exist
-			doc, err = rm.Store.CreateDocument("Untitled Document", "")
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		room = &Room{
-			ID:         roomID,
-			Document:   doc,
-			Clients:    make(map[string]*Client),
-			Broadcast:  make(chan []byte, 256),
-			Register:   make(chan *Client, 10),
-			Unregister: make(chan *Client, 10),
-		}
-
-		rm.rooms[roomID] = room
-		go room.run()
+	room, ok := rm.rooms[roomID]
+	if ok {
+		return room, nil
 	}
+
+	//get document
+	document, err := rm.Store.GetDocument(roomID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create a new room
+	room = &Room{
+		ID:         roomID,
+		Document:   document,
+		Clients:    make(map[string]*Client),
+		Register:   make(chan *Client),
+		Unregister: make(chan *Client),
+		Broadcast:  make(chan []byte, 256),
+	}
+
+	rm.rooms[roomID] = room
+
+	// Start room.Run() immediately in a goroutine
+	go room.run()
 
 	return room, nil
 }
 
 // run handles room operations
 func (r *Room) run() {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("panic in room.Run: %v\n%s", rec, debug.Stack())
+		}
+	}()
 	log.Println("Room run started")
 	for {
 		select {
@@ -98,8 +120,9 @@ func (r *Room) run() {
 			r.mutex.Lock()
 			r.Clients[client.ID] = client
 			r.mutex.Unlock()
-
-			// Notify other clients about new user
+			//send snapshot
+			r.sendSnapshot(client)
+			//broadcast user joined
 			r.broadcastUserJoined(client)
 			log.Printf("Client %s joined room %s", client.ID, r.ID)
 
@@ -149,6 +172,19 @@ func (r *Room) broadcastUserJoined(client *Client) {
 	r.Broadcast <- data
 }
 
+func (r *Room) sendSnapshot(c *Client) {
+	// Send initial snapshot
+	snapshot := map[string]interface{}{
+		"type":     "snapshot",
+		"id":       c.Room.Document.ID,
+		"content":  c.Room.Document.Content,
+		"title":    c.Room.Document.Title,
+		"language": c.Room.Document.Language,
+	}
+	msg, _ := json.Marshal(snapshot)
+	c.Send <- msg
+}
+
 // broadcastUserLeft notifies clients about a user leaving
 func (r *Room) broadcastUserLeft(client *Client) {
 	message := map[string]interface{}{
@@ -168,6 +204,51 @@ func (r *Room) BroadcastOperation(operation *Operation, excludeClientID string) 
 	message := map[string]interface{}{
 		"type":      "operation",
 		"operation": operation,
+	}
+
+	data, _ := json.Marshal(message)
+
+	r.mutex.RLock()
+	for _, client := range r.Clients {
+		if client.ID != excludeClientID {
+			select {
+			case client.Send <- data:
+			default:
+				close(client.Send)
+				delete(r.Clients, client.ID)
+			}
+		}
+	}
+	r.mutex.RUnlock()
+}
+
+// BroadcastOperation broadcasts an operation to all clients except the sender
+func (r *Room) BroadcastMetadataUpdate(update *MetadataUpdate, excludeClientID string) {
+	message := map[string]interface{}{
+		"type":            "document_update",
+		"document_update": update,
+	}
+
+	data, _ := json.Marshal(message)
+
+	r.mutex.RLock()
+	for _, client := range r.Clients {
+		if client.ID != excludeClientID {
+			select {
+			case client.Send <- data:
+			default:
+				close(client.Send)
+				delete(r.Clients, client.ID)
+			}
+		}
+	}
+	r.mutex.RUnlock()
+}
+
+func (r *Room) BroadcastSnapshotUpdate(snapshot *Snapshot, excludeClientID string) {
+	message := map[string]interface{}{
+		"type":     "snapshot",
+		"snapshot": snapshot,
 	}
 
 	data, _ := json.Marshal(message)

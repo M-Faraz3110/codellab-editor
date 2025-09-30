@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"collab-editor/pkg/db"
@@ -40,7 +41,6 @@ func (h *Handlers) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		log.Printf("WebSocket upgrade error: %v", err)
 		return
 	}
-	defer conn.Close()
 
 	vars := mux.Vars(r) //this is lowkey goated
 	roomID := vars["roomId"]
@@ -55,6 +55,7 @@ func (h *Handlers) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	roomInstance, err := h.roomManager.GetOrCreateRoom(roomID)
 	if err != nil {
 		log.Printf("Error getting room %s: %v", roomID, err)
+		conn.Close()
 		return
 	}
 
@@ -67,12 +68,13 @@ func (h *Handlers) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		Send:     make(chan []byte, 256),
 	}
 
-	// Register client with room
-	roomInstance.Register <- client
-
 	// Start goroutines for reading and writing
 	go h.writePump(client)
 	go h.readPump(client)
+
+	// Register client with room
+	roomInstance.Register <- client
+
 }
 
 // readPump handles reading messages from the WebSocket
@@ -80,11 +82,17 @@ func (h *Handlers) readPump(c *room.Client) {
 	log.Println("Starting readPump for", c.ID)
 	defer func() {
 		if r := recover(); r != nil {
-			log.Println("Recovered in readPump", r)
+			log.Printf("panic in readPump for %s: %v\n%s", c.ID, r, debug.Stack())
 		}
-		log.Println("readPump exiting for", c.ID)
-		c.Room.Unregister <- c
+		// signal the room to unregister this client (non-blocking attempt)
+		select {
+		case c.Room.Unregister <- c:
+		default:
+		}
+		// close connection only here — do NOT close c.Send here
+		log.Println("readPump closing for", c.ID)
 		c.Conn.Close()
+		log.Println("readPump exiting for", c.ID)
 	}()
 
 	c.Conn.SetReadLimit(512)
@@ -95,31 +103,46 @@ func (h *Handlers) readPump(c *room.Client) {
 	})
 
 	for {
-		log.Println("About to read message")
+		log.Println("About to read message for", c.ID)
 		_, message, err := c.Conn.ReadMessage()
 		if err != nil {
-			log.Printf("ReadMessage error: %v", err)
+			log.Printf("ReadMessage error for %s: %v", c.ID, err)
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("WebSocket error: %v", err)
+				log.Printf("WebSocket unexpected close for %s: %v", c.ID, err)
 			}
 			break
 		}
 
-		// Parse the message
+		// Parse message
 		var msg map[string]interface{}
 		if err := json.Unmarshal(message, &msg); err != nil {
-			log.Printf("Error parsing message: %v", err)
+			log.Printf("Error parsing message from %s: %v", c.ID, err)
 			continue
 		}
 
-		// Handle different message types
 		switch msg["type"] {
+		case "init":
+			// Only broadcast user_joined when the client sends explicit init/ready
+			if u, ok := msg["username"].(string); ok && u != "" {
+				c.Username = u
+			}
+			userJoinedMsg, _ := json.Marshal(map[string]interface{}{
+				"type": "user_joined",
+				"user": map[string]interface{}{"id": c.ID, "username": c.Username},
+			})
+			c.Room.Broadcast <- userJoinedMsg
+
 		case "operation":
 			h.handleOperation(c, msg)
 		case "ping":
-			// Respond to ping with pong
-			//c.Conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"pong"}`))
+			// application-level ping -> send a pong via Send channel
 			c.Send <- []byte(`{"type":"pong"}`)
+		case "document_update":
+			h.handleDocUpdate(c, msg)
+		case "snapshot":
+			h.handleSnapshot(c, msg)
+		default:
+			log.Printf("Unknown message type from %s: %v", c.ID, msg["type"])
 		}
 	}
 }
@@ -129,9 +152,15 @@ func (h *Handlers) writePump(c *room.Client) {
 	log.Println("Starting writePump for", c.ID)
 	ticker := time.NewTicker(54 * time.Second)
 	defer func() {
-		log.Println("Exiting writePump for", c.ID)
 		ticker.Stop()
+		// Ensure the client is unregistered and that the connection is closed
+		select {
+		case c.Room.Unregister <- c:
+		default:
+		}
+		log.Println("writePump closing for", c.ID)
 		c.Conn.Close()
+		log.Println("Exiting writePump for", c.ID)
 	}()
 
 	for {
@@ -139,18 +168,50 @@ func (h *Handlers) writePump(c *room.Client) {
 		case message, ok := <-c.Send:
 			c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if !ok {
-				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+				// channel closed: send close and return
+				_ = c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
 			if err := c.Conn.WriteMessage(websocket.TextMessage, message); err != nil {
-				log.Printf("WebSocket write error: %v", err)
+				log.Printf("WebSocket write error for %s: %v", c.ID, err)
+				// signal the room to unregister this client (non-blocking)
+				select {
+				case c.Room.Unregister <- c:
+				default:
+				}
 				return
 			}
+
+			// w, err := c.Conn.NextWriter(websocket.TextMessage)
+			// if err != nil {
+			// 	log.Printf("NextWriter error for %s: %v", c.ID, err)
+			// 	// Trigger cleanup and return
+			// 	select {
+			// 	case c.Room.Unregister <- c:
+			// 	default:
+			// 	}
+			// 	return
+			// }
+
+			// if _, err := w.Write(message); err != nil {
+			// 	log.Printf("Write error for %s: %v", c.ID, err)
+			// 	_ = w.Close()
+			// 	select {
+			// 	case c.Room.Unregister <- c:
+			// 	default:
+			// 	}
+			// 	return
+			// }
 
 		case <-ticker.C:
 			c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				log.Printf("Ping error for %s: %v", c.ID, err)
+				select {
+				case c.Room.Unregister <- c:
+				default:
+				}
 				return
 			}
 		}
@@ -181,6 +242,45 @@ func (h *Handlers) handleOperation(client *room.Client, msg map[string]interface
 	h.updateDocumentContent(client.Room, operation)
 }
 
+func (h *Handlers) handleDocUpdate(client *room.Client, msg map[string]interface{}) {
+	updateData, ok := msg["document_update"].(map[string]interface{})
+	if !ok {
+		log.Printf("Invalid update format")
+		return
+	}
+
+	update := &room.MetadataUpdate{
+		Type:      "document_update",
+		Title:     updateData["title"].(string),
+		Language:  updateData["language"].(string),
+		ClientID:  client.ID,
+		Timestamp: time.Now().UnixNano(),
+	}
+
+	client.Room.BroadcastMetadataUpdate(update, client.ID)
+
+	h.updateDocumentMetadata(client.Room, update)
+}
+
+func (h *Handlers) handleSnapshot(client *room.Client, msg map[string]interface{}) {
+	snapshotData, ok := msg["snapshot"].(map[string]interface{})
+	if !ok {
+		log.Printf("Invalid snapshot format")
+		return
+	}
+
+	snapshot := &room.Snapshot{
+		Type:      "snapshot",
+		Content:   snapshotData["content"].(string),
+		ClientID:  client.ID,
+		Timestamp: time.Now().UnixNano(),
+	}
+
+	client.Room.BroadcastSnapshotUpdate(snapshot, client.ID)
+
+	h.updateDocumentSnapshot(client.Room, snapshot)
+}
+
 // updateDocumentContent updates the document content based on the operation
 // This is the ONLY way to update document content in the collaborative editor
 func (h *Handlers) updateDocumentContent(room *room.Room, operation *room.Operation) {
@@ -208,10 +308,40 @@ func (h *Handlers) updateDocumentContent(room *room.Room, operation *room.Operat
 	// Update version
 	room.Document.Version++
 
+	// updates := db.DocumentUpdate{
+	// 	Title:    nil,
+	// 	Content:  &room.Document.Content,
+	// 	Language: nil,
+	// }
+
+	// _, err := h.roomManager.Store.UpdateDocument(room.ID, &updates)
+	// if err != nil {
+	// 	log.Printf("failed to updated doc")
+	// 	return
+	// }
+}
+
+func (h *Handlers) updateDocumentMetadata(room *room.Room, update *room.MetadataUpdate) {
+	room.Document.Version++
 	updates := db.DocumentUpdate{
-		Title:    nil,
+		Title:    &update.Title,
 		Content:  &room.Document.Content,
-		Language: nil,
+		Language: &update.Language,
+	}
+
+	_, err := h.roomManager.Store.UpdateDocument(room.ID, &updates)
+	if err != nil {
+		log.Printf("failed to updated doc")
+		return
+	}
+}
+
+func (h *Handlers) updateDocumentSnapshot(room *room.Room, snapshot *room.Snapshot) {
+	room.Document.Version++
+	updates := db.DocumentUpdate{
+		Title:    &room.Document.Title,
+		Content:  &snapshot.Content,
+		Language: &room.Document.Language,
 	}
 
 	_, err := h.roomManager.Store.UpdateDocument(room.ID, &updates)
