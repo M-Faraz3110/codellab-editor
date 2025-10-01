@@ -133,6 +133,7 @@ func (h *Handlers) readPump(c *room.Client) {
 			c.Room.Broadcast <- userJoinedMsg
 
 		case "operation":
+			log.Printf("received operation")
 			h.handleOperation(c, msg)
 		case "ping":
 			// application-level ping -> send a pong via Send channel
@@ -173,6 +174,7 @@ func (h *Handlers) writePump(c *room.Client) {
 				return
 			}
 
+			log.Println("writing message" + string(message))
 			if err := c.Conn.WriteMessage(websocket.TextMessage, message); err != nil {
 				log.Printf("WebSocket write error for %s: %v", c.ID, err)
 				// signal the room to unregister this client (non-blocking)
@@ -263,15 +265,16 @@ func (h *Handlers) handleDocUpdate(client *room.Client, msg map[string]interface
 }
 
 func (h *Handlers) handleSnapshot(client *room.Client, msg map[string]interface{}) {
-	snapshotData, ok := msg["snapshot"].(map[string]interface{})
-	if !ok {
-		log.Printf("Invalid snapshot format")
-		return
-	}
+	// snapshotData, ok := msg.(map[string]interface{})
+	// if !ok {
+	// 	log.Printf("Invalid snapshot format")
+	// 	return
+	// }
 
+	//so inconsistent...
 	snapshot := &room.Snapshot{
 		Type:      "snapshot",
-		Content:   snapshotData["content"].(string),
+		Content:   msg["content"].(string),
 		ClientID:  client.ID,
 		Timestamp: time.Now().UnixNano(),
 	}

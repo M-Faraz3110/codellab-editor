@@ -247,8 +247,11 @@ func (r *Room) BroadcastMetadataUpdate(update *MetadataUpdate, excludeClientID s
 
 func (r *Room) BroadcastSnapshotUpdate(snapshot *Snapshot, excludeClientID string) {
 	message := map[string]interface{}{
-		"type":     "snapshot",
-		"snapshot": snapshot,
+		"type": "snapshot",
+		//"id":       c.Room.Document.ID,
+		"content": snapshot.Content,
+		// "title":    snapshot.,
+		// "language": snapshot.Language,
 	}
 
 	data, _ := json.Marshal(message)
