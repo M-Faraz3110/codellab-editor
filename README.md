@@ -1,9 +1,4 @@
-## TO-DO
-1. Auth
-2. Index
-   
-
-# Collaborative Code Editor
+# Collaborative Code Editor?
 
 A real-time collaborative code editor built with Go backend and WebSocket communication.
 
@@ -157,21 +152,3 @@ The application supports configuration through environment variables or a `.env`
   }
 }
 ```
-
-## Development Notes
-
-- **PostgreSQL storage** - Documents are persisted to database
-- Basic operational transformation (simplified for demo)
-- CORS enabled for development
-- No authentication/authorization (for demo purposes)
-- **Document updates are WebSocket-only** to prevent data loss in collaborative editing
-
-## Next Steps
-
-- [ ] Implement proper operational transformation
-- [x] Add persistent storage (database) ✅
-- [ ] Add user authentication
-- [ ] Implement conflict resolution
-- [ ] Add frontend client
-- [ ] Add syntax highlighting
-- [ ] Add file management
