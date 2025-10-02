@@ -15,7 +15,7 @@ type Document struct {
 
 // DocumentStore interface for document persistence
 type IDocumentStore interface {
-	CreateDocument(title, content string) (*Document, error)
+	CreateDocument(title, content, language string) (*Document, error)
 	GetDocument(id string) (*Document, error)
 	// UpdateDocument applies partial updates. Use pointer fields in DocumentUpdate
 	// to indicate which fields should be modified.

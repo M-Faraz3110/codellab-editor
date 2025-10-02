@@ -42,7 +42,7 @@ func (s *PostgresDocumentStore) Close() error {
 	return s.db.Close()
 }
 
-func (s *PostgresDocumentStore) CreateDocument(title, content string) (*Document, error) {
+func (s *PostgresDocumentStore) CreateDocument(title, content, language string) (*Document, error) {
 	id := uuid.New().String()
 	now := time.Now()
 
@@ -53,7 +53,7 @@ func (s *PostgresDocumentStore) CreateDocument(title, content string) (*Document
 	`
 
 	doc := &Document{}
-	err := s.db.QueryRow(query, id, title, content, "", now, now, 1).Scan(
+	err := s.db.QueryRow(query, id, title, content, language, now, now, 1).Scan(
 		&doc.ID,
 		&doc.Title,
 		&doc.Content,

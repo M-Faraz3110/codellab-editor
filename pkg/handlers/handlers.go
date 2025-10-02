@@ -245,16 +245,23 @@ func (h *Handlers) handleOperation(client *room.Client, msg map[string]interface
 }
 
 func (h *Handlers) handleDocUpdate(client *room.Client, msg map[string]interface{}) {
-	updateData, ok := msg["document_update"].(map[string]interface{})
-	if !ok {
+	// updateData, ok := msg["document_update"].(map[string]interface{})
+	// if !ok {
+	// 	log.Printf("Invalid update format")
+	// 	return
+	// }
+	_, okt := msg["title"].(string)
+	_, okl := msg["language"].(string)
+
+	if !okt || !okl {
 		log.Printf("Invalid update format")
 		return
 	}
 
 	update := &room.MetadataUpdate{
 		Type:      "document_update",
-		Title:     updateData["title"].(string),
-		Language:  updateData["language"].(string),
+		Title:     msg["title"].(string),
+		Language:  msg["language"].(string),
 		ClientID:  client.ID,
 		Timestamp: time.Now().UnixNano(),
 	}
@@ -270,6 +277,13 @@ func (h *Handlers) handleSnapshot(client *room.Client, msg map[string]interface{
 	// 	log.Printf("Invalid snapshot format")
 	// 	return
 	// }
+
+	_, ok := msg["content"]
+
+	if !ok {
+		log.Printf("Invalid snapshot format")
+		return
+	}
 
 	//so inconsistent...
 	snapshot := &room.Snapshot{
@@ -357,8 +371,9 @@ func (h *Handlers) updateDocumentSnapshot(room *room.Room, snapshot *room.Snapsh
 // CreateDocument creates a new document
 func (h *Handlers) CreateDocument(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Title   string `json:"title"`
-		Content string `json:"content"`
+		Title    string `json:"title"`
+		Content  string `json:"content"`
+		Language string `json:"language"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -366,7 +381,7 @@ func (h *Handlers) CreateDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	doc, err := h.roomManager.Store.CreateDocument(req.Title, req.Content)
+	doc, err := h.roomManager.Store.CreateDocument(req.Title, req.Content, req.Language)
 	if err != nil {
 		http.Error(w, "Failed to create document", http.StatusInternalServerError)
 		return
