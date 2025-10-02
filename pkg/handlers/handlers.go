@@ -361,7 +361,7 @@ func (h *Handlers) updateDocumentSnapshot(room *room.Room, snapshot *room.Snapsh
 		Language: &room.Document.Language,
 	}
 
-	_, err := h.roomManager.Store.UpdateDocument(room.ID, &updates)
+	_, err := h.roomManager.Store.UpdateDocument(room.ID, &updates) // we dont commit this to db, just broadcast it to reduce load
 	if err != nil {
 		log.Printf("failed to updated doc")
 		return

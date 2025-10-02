@@ -1,6 +1,7 @@
-# Collaborative Code Editor?
+# Collaborative Code Editor kinda?
 
-A real-time collaborative code editor built with Go backend and WebSocket communication.
+A real-time collaborative code editor backend written in Go.
+Provides a WebSocket server for low-latency collaborative editing plus HTTP endpoints for basic document management.
 
 ## Features
 
@@ -29,25 +30,24 @@ A real-time collaborative code editor built with Go backend and WebSocket commun
 
 ```
 collab-editor/
-├── main.go                 # Server entry point
-├── go.mod                  # Go dependencies
-├── .env.example            # Configuration template
+├── main.go
+├── go.mod
+├── .env.example
 ├── app/
-│   └── server.go          # Application server setup
 ├── pkg/
-│   ├── config/            # Configuration management
-│   ├── handlers/          # HTTP & WebSocket handlers
-│   ├── room/              # Room management & operations
-│   └── db/                # Document persistence
+│   ├── config/
+│   ├── handlers/
+│   ├── room/
+│   └── db/
 ├── scripts/
-│   └── setup-db.sh        # Database setup script
-└── test_client.html       # Demo client
+│   └── setup-db.sh
+└── test_client.html
 ```
 
 ## API Endpoints
 
 ### WebSocket
-- `WS /ws/{roomId}?username={username}` - Connect to a collaborative room
+- `WS /ws/?id={roomId}` - Connect to a collaborative room
 
 ### REST API
 - `POST /api/documents` - Create a new document
@@ -65,7 +65,6 @@ The application supports configuration through environment variables or a `.env`
 
 | Variable      | Default         | Description                      |
 | ------------- | --------------- | -------------------------------- |
-| `SERVER_HOST` | `localhost`     | Server host address              |
 | `SERVER_PORT` | `8080`          | Server port                      |
 | `DB_HOST`     | `localhost`     | PostgreSQL host                  |
 | `DB_PORT`     | `5432`          | PostgreSQL port                  |
@@ -91,32 +90,12 @@ The application supports configuration through environment variables or a `.env`
    createdb collab_editor
    ```
 
-3. **Configure the Application** (optional - defaults shown):
-   
-   **Option A: Using .env file** (recommended for development):
-   ```bash
-   cp .env.example .env
-   # Edit .env file with your configuration
-   ```
-   
-   **Option B: Using environment variables**:
-   ```bash
-   export SERVER_HOST=localhost
-   export SERVER_PORT=8080
-   export DB_HOST=localhost
-   export DB_PORT=5432
-   export DB_USER=postgres
-   export DB_PASSWORD=postgres
-   export DB_NAME=collab_editor
-   export DB_SSLMODE=disable
-   ```
-
-4. **Run the Server**:
+3. **Run the Server**:
    ```bash
    go run main.go
    ```
 
-5. **Connect via WebSocket**:
+4. **Connect via WebSocket**:
    ```javascript
    const ws = new WebSocket('ws://localhost:8080/ws/room123?username=YourName');
    ```
