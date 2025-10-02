@@ -3,6 +3,8 @@
 A real-time collaborative code editor backend written in Go.
 Provides a WebSocket server for low-latency collaborative editing plus HTTP endpoints for basic document management.
 
+Deployed on Render for now: https://codellab-editor.onrender.com
+
 ## Features
 
 - **Real-time Collaboration**: Multiple users can edit the same document simultaneously
