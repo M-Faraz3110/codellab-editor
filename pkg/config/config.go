@@ -16,7 +16,6 @@ type Config struct {
 
 // ServerConfig holds server-related configuration
 type ServerConfig struct {
-	Host string
 	Port string
 }
 
@@ -39,7 +38,7 @@ func Load() *Config {
 
 	return &Config{
 		Server: ServerConfig{
-			Host: getEnv("SERVER_HOST", "localhost"),
+			//Host: getEnv("SERVER_HOST", "localhost"),
 			Port: getEnv("SERVER_PORT", "8080"),
 		},
 		Database: DatabaseConfig{
@@ -55,7 +54,7 @@ func Load() *Config {
 
 // GetServerAddr returns the server address in host:port format
 func (c *Config) GetServerAddr() string {
-	return c.Server.Host + ":" + c.Server.Port
+	return ":" + c.Server.Port
 }
 
 // GetDatabaseConnectionString returns the PostgreSQL connection string
