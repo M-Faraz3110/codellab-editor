@@ -143,7 +143,13 @@ func (h *Handlers) readPump(c *room.Client) {
 		case "document_update":
 			h.handleDocUpdate(c, msg)
 		case "snapshot":
-			h.handleSnapshot(c, msg)
+			var snapshot room.Snapshot
+			err := json.Unmarshal(message, &snapshot)
+			if err != nil {
+				log.Printf("error parsing snapshot: %v", err)
+				continue
+			}
+			h.handleSnapshot(c, snapshot)
 		case "presence_user":
 			log.Printf("received presence update")
 			h.handlePresence(c, msg)
@@ -189,27 +195,6 @@ func (h *Handlers) writePump(c *room.Client) {
 				}
 				return
 			}
-
-			// w, err := c.Conn.NextWriter(websocket.TextMessage)
-			// if err != nil {
-			// 	log.Printf("NextWriter error for %s: %v", c.ID, err)
-			// 	// Trigger cleanup and return
-			// 	select {
-			// 	case c.Room.Unregister <- c:
-			// 	default:
-			// 	}
-			// 	return
-			// }
-
-			// if _, err := w.Write(message); err != nil {
-			// 	log.Printf("Write error for %s: %v", c.ID, err)
-			// 	_ = w.Close()
-			// 	select {
-			// 	case c.Room.Unregister <- c:
-			// 	default:
-			// 	}
-			// 	return
-			// }
 
 		case <-ticker.C:
 			c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -269,11 +254,6 @@ func (h *Handlers) handleInit(client *room.Client, msg map[string]interface{}) {
 }
 
 func (h *Handlers) handleDocUpdate(client *room.Client, msg map[string]interface{}) {
-	// updateData, ok := msg["document_update"].(map[string]interface{})
-	// if !ok {
-	// 	log.Printf("Invalid update format")
-	// 	return
-	// }
 	_, okt := msg["title"].(string)
 	_, okl := msg["language"].(string)
 
@@ -295,25 +275,20 @@ func (h *Handlers) handleDocUpdate(client *room.Client, msg map[string]interface
 	h.updateDocumentMetadata(client.Room, update)
 }
 
-func (h *Handlers) handleSnapshot(client *room.Client, msg map[string]interface{}) {
-	// snapshotData, ok := msg.(map[string]interface{})
-	// if !ok {
-	// 	log.Printf("Invalid snapshot format")
-	// 	return
-	// }
-
-	content, ok1 := msg["content"].(string)
-	users, ok2 := msg["users"].([]room.Client)
-
-	if !ok1 || !ok2 {
-		log.Printf("Invalid snapshot format")
-		return
+func (h *Handlers) handleSnapshot(client *room.Client, msg room.Snapshot) {
+	users := make([]room.Client, len(msg.Users))
+	for i, user := range msg.Users {
+		users[i] = room.Client{
+			ID:       user.ID,
+			ClientID: user.ClientID,
+			Username: user.Username,
+		}
 	}
 
 	//so inconsistent...
 	snapshot := &room.Snapshot{
 		Type:      "snapshot",
-		Content:   content,
+		Content:   msg.Content,
 		ClientID:  client.ClientID,
 		Users:     users,
 		Timestamp: time.Now().UnixNano(),
@@ -376,18 +351,6 @@ func (h *Handlers) updateDocumentContent(room *room.Room, operation *room.Operat
 	room.Document.Version++
 
 	// we dont commit this to db, just broadcast it to reduce load
-
-	// updates := db.DocumentUpdate{
-	// 	Title:    nil,
-	// 	Content:  &room.Document.Content,
-	// 	Language: nil,
-	// }
-
-	// _, err := h.roomManager.Store.UpdateDocument(room.ID, &updates)
-	// if err != nil {
-	// 	log.Printf("failed to updated doc")
-	// 	return
-	// }
 }
 
 func (h *Handlers) updateDocumentMetadata(room *room.Room, update *room.MetadataUpdate) {

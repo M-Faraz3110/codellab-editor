@@ -32,7 +32,7 @@ type MetadataUpdate struct {
 type Snapshot struct {
 	Type      string   `json:"type"`
 	Content   string   `json:"content"`
-	ClientID  string   `json:"client_id"`
+	ClientID  string   `json:"id"`
 	Users     []Client `json:"users"`
 	Timestamp int64    `json:"timestamp"`
 }
@@ -47,8 +47,8 @@ type Presence struct {
 
 // Client represents a connected client in a room
 type Client struct {
-	ID       string          `json:"id"`
-	ClientID string          `json:"client_id"`
+	ID       string          `json:"-"`
+	ClientID string          `json:"id"`
 	Username string          `json:"username"`
 	Conn     *websocket.Conn `json:"-"`
 	Room     *Room           `json:"-"`
