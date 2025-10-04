@@ -30,19 +30,34 @@ type MetadataUpdate struct {
 }
 
 type Snapshot struct {
-	Type      string `json:"type"`
-	Content   string `json:"content"`
-	ClientID  string `json:"client_id"`
-	Timestamp int64  `json:"timestamp"`
+	Type      string   `json:"type"`
+	Content   string   `json:"content"`
+	ClientID  string   `json:"client_id"`
+	Users     []Client `json:"users"`
+	Timestamp int64    `json:"timestamp"`
+}
+type Presence struct {
+	Type       string  `json:"type"`
+	ClientID   string  `json:"client_id"`
+	Username   string  `json:"username"`
+	Color      string  `json:"color"`
+	LineNumber float64 `json:"lineNumber"`
+	Column     float64 `json:"column"`
 }
 
 // Client represents a connected client in a room
 type Client struct {
 	ID       string          `json:"id"`
+	ClientID string          `json:"client_id"`
 	Username string          `json:"username"`
 	Conn     *websocket.Conn `json:"-"`
 	Room     *Room           `json:"-"`
 	Send     chan []byte     `json:"-"`
+}
+
+type User struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
 }
 
 // Room represents a collaborative editing session
@@ -122,7 +137,7 @@ func (r *Room) run() {
 			r.mutex.Unlock()
 			//send snapshot
 			r.sendSnapshot(client)
-			//broadcast user joined
+			// //broadcast user joined
 			r.broadcastUserJoined(client)
 			log.Printf("Client %s joined room %s", client.ID, r.ID)
 
@@ -161,11 +176,20 @@ func (r *Room) run() {
 // broadcastUserJoined notifies clients about a new user
 func (r *Room) broadcastUserJoined(client *Client) {
 	message := map[string]interface{}{
-		"type": "user_joined",
-		"user": map[string]interface{}{
-			"id":       client.ID,
-			"username": client.Username,
-		},
+		"type":     "user_joined",
+		"id":       client.ClientID,
+		"username": client.Username,
+	}
+
+	data, _ := json.Marshal(message)
+	r.Broadcast <- data
+}
+
+func (r *Room) BroadcastUserConnected(user *User) {
+	message := map[string]interface{}{
+		"type":     "init_ok",
+		"id":       user.ID,
+		"username": user.Username,
 	}
 
 	data, _ := json.Marshal(message)
@@ -180,6 +204,7 @@ func (r *Room) sendSnapshot(c *Client) {
 		"content":  c.Room.Document.Content,
 		"title":    c.Room.Document.Title,
 		"language": c.Room.Document.Language,
+		"users":    c.Room.GetUsers(),
 	}
 	msg, _ := json.Marshal(snapshot)
 	c.Send <- msg
@@ -188,11 +213,9 @@ func (r *Room) sendSnapshot(c *Client) {
 // broadcastUserLeft notifies clients about a user leaving
 func (r *Room) broadcastUserLeft(client *Client) {
 	message := map[string]interface{}{
-		"type": "user_left",
-		"user": map[string]interface{}{
-			"id":       client.ID,
-			"username": client.Username,
-		},
+		"type":     "user_left",
+		"id":       client.ClientID,
+		"username": client.Username,
 	}
 
 	data, _ := json.Marshal(message)
@@ -220,6 +243,34 @@ func (r *Room) BroadcastOperation(operation *Operation, excludeClientID string) 
 		}
 	}
 	r.mutex.RUnlock()
+}
+
+func (r *Room) BroadcastPresence(presence *Presence, excludeClientID string) {
+	message := map[string]interface{}{
+		"type":       "presence_user",
+		"id":         presence.ClientID,
+		"username":   presence.Username,
+		"color":      presence.Color,
+		"lineNumber": presence.LineNumber,
+		"column":     presence.Column,
+	}
+
+	data, _ := json.Marshal(message)
+	log.Printf("broadcasting presence")
+
+	r.mutex.RLock()
+	for _, client := range r.Clients {
+		if client.ID != excludeClientID {
+			select {
+			case client.Send <- data:
+			default:
+				close(client.Send)
+				delete(r.Clients, client.ID)
+			}
+		}
+	}
+	r.mutex.RUnlock()
+
 }
 
 // BroadcastOperation broadcasts an operation to all clients except the sender
@@ -250,6 +301,7 @@ func (r *Room) BroadcastSnapshotUpdate(snapshot *Snapshot, excludeClientID strin
 		"type": "snapshot",
 		//"id":       c.Room.Document.ID,
 		"content": snapshot.Content,
+		"users":   snapshot.Users,
 		// "title":    snapshot.,
 		// "language": snapshot.Language,
 	}
@@ -271,15 +323,15 @@ func (r *Room) BroadcastSnapshotUpdate(snapshot *Snapshot, excludeClientID strin
 }
 
 // GetUsers returns a list of users currently in the room
-func (r *Room) GetUsers() []map[string]interface{} {
+func (r *Room) GetUsers() []User {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 
-	users := make([]map[string]interface{}, 0, len(r.Clients))
+	users := make([]User, 0, len(r.Clients))
 	for _, client := range r.Clients {
-		users = append(users, map[string]interface{}{
-			"id":       client.ID,
-			"username": client.Username,
+		users = append(users, User{
+			ID:       client.ID,
+			Username: client.Username,
 		})
 	}
 

@@ -45,11 +45,16 @@ func (h *Handlers) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r) //this is lowkey goated
 	roomID := vars["roomId"]
 
-	// Get username from query parameter
-	username := r.URL.Query().Get("username")
-	if username == "" {
-		username = "Anonymous"
-	}
+	var clientId, username string
+
+	// if proto := r.Header.Get("Sec-WebSocket-Protocol"); proto != "" {
+	// 	// header may contain comma-separated protocols; take first
+	// 	id := strings.Split(proto, ",")[0]
+	// 	userID = id
+	// 	uname := strings.Split(proto, ",")[1]
+	// 	username = uname
+
+	// }
 
 	// Get or create room
 	roomInstance, err := h.roomManager.GetOrCreateRoom(roomID)
@@ -62,6 +67,7 @@ func (h *Handlers) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Create client
 	client := &room.Client{
 		ID:       uuid.New().String(),
+		ClientID: clientId,
 		Username: username,
 		Conn:     conn,
 		Room:     roomInstance,
@@ -123,15 +129,11 @@ func (h *Handlers) readPump(c *room.Client) {
 		switch msg["type"] {
 		case "init":
 			// Only broadcast user_joined when the client sends explicit init/ready
-			if u, ok := msg["username"].(string); ok && u != "" {
-				c.Username = u
-			}
-			userJoinedMsg, _ := json.Marshal(map[string]interface{}{
-				"type": "user_joined",
-				"user": map[string]interface{}{"id": c.ID, "username": c.Username},
-			})
-			c.Room.Broadcast <- userJoinedMsg
-
+			// if u, ok := msg["username"].(string); ok && u != "" {
+			// 	c.Username = u
+			// }
+			h.handleInit(c, msg)
+			//c.Room.Broadcast <- userJoinedMsg
 		case "operation":
 			log.Printf("received operation")
 			h.handleOperation(c, msg)
@@ -142,6 +144,9 @@ func (h *Handlers) readPump(c *room.Client) {
 			h.handleDocUpdate(c, msg)
 		case "snapshot":
 			h.handleSnapshot(c, msg)
+		case "presence_user":
+			log.Printf("received presence update")
+			h.handlePresence(c, msg)
 		default:
 			log.Printf("Unknown message type from %s: %v", c.ID, msg["type"])
 		}
@@ -244,6 +249,25 @@ func (h *Handlers) handleOperation(client *room.Client, msg map[string]interface
 	h.updateDocumentContent(client.Room, operation)
 }
 
+func (h *Handlers) handleInit(client *room.Client, msg map[string]interface{}) {
+	id, ok1 := msg["id"].(string)
+	username, ok2 := msg["username"].(string)
+
+	if !ok1 || !ok2 {
+		log.Printf("Invalid init format")
+	}
+
+	client.ClientID = id
+	client.Username = username
+
+	initok := &room.User{
+		ID:       id,
+		Username: username,
+	}
+
+	client.Room.BroadcastUserConnected(initok)
+}
+
 func (h *Handlers) handleDocUpdate(client *room.Client, msg map[string]interface{}) {
 	// updateData, ok := msg["document_update"].(map[string]interface{})
 	// if !ok {
@@ -278,9 +302,10 @@ func (h *Handlers) handleSnapshot(client *room.Client, msg map[string]interface{
 	// 	return
 	// }
 
-	_, ok := msg["content"]
+	content, ok1 := msg["content"].(string)
+	users, ok2 := msg["users"].([]room.Client)
 
-	if !ok {
+	if !ok1 || !ok2 {
 		log.Printf("Invalid snapshot format")
 		return
 	}
@@ -288,14 +313,39 @@ func (h *Handlers) handleSnapshot(client *room.Client, msg map[string]interface{
 	//so inconsistent...
 	snapshot := &room.Snapshot{
 		Type:      "snapshot",
-		Content:   msg["content"].(string),
-		ClientID:  client.ID,
+		Content:   content,
+		ClientID:  client.ClientID,
+		Users:     users,
 		Timestamp: time.Now().UnixNano(),
 	}
 
 	client.Room.BroadcastSnapshotUpdate(snapshot, client.ID)
 
 	h.updateDocumentSnapshot(client.Room, snapshot)
+}
+
+func (h *Handlers) handlePresence(client *room.Client, msg map[string]interface{}) {
+	username, oku := msg["username"].(string)
+	color, okc := msg["color"].(string)
+	lineNumber, okl := msg["lineNumber"].(float64)
+	column, okcl := msg["column"].(float64)
+
+	if !oku || !okc || !okl || !okcl {
+		log.Printf("Invalid presence format")
+		return
+	}
+
+	presence := &room.Presence{
+		Type:       "presence_user",
+		ClientID:   client.ClientID,
+		Username:   username,
+		Color:      color,
+		LineNumber: lineNumber,
+		Column:     column,
+	}
+
+	client.Room.BroadcastPresence(presence, client.ID) //dont need to persist this
+
 }
 
 // updateDocumentContent updates the document content based on the operation
@@ -324,6 +374,8 @@ func (h *Handlers) updateDocumentContent(room *room.Room, operation *room.Operat
 
 	// Update version
 	room.Document.Version++
+
+	// we dont commit this to db, just broadcast it to reduce load
 
 	// updates := db.DocumentUpdate{
 	// 	Title:    nil,
@@ -361,7 +413,7 @@ func (h *Handlers) updateDocumentSnapshot(room *room.Room, snapshot *room.Snapsh
 		Language: &room.Document.Language,
 	}
 
-	_, err := h.roomManager.Store.UpdateDocument(room.ID, &updates) // we dont commit this to db, just broadcast it to reduce load
+	_, err := h.roomManager.Store.UpdateDocument(room.ID, &updates)
 	if err != nil {
 		log.Printf("failed to updated doc")
 		return
