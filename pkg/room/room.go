@@ -356,7 +356,7 @@ func (r *Room) GetUsers() []User {
 	users := make([]User, 0, len(r.Clients))
 	for _, client := range r.Clients {
 		users = append(users, User{
-			ID:       client.ID,
+			ID:       client.ClientID,
 			Username: client.Username,
 		})
 	}
