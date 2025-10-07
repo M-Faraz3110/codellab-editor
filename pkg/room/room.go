@@ -35,6 +35,8 @@ type Snapshot struct {
 	ClientID  string   `json:"id"`
 	Users     []Client `json:"users"`
 	Timestamp int64    `json:"timestamp"`
+	Seq       uint64   `json:"seq,omitempty"` // correlation id
+
 }
 type Presence struct {
 	Type       string  `json:"type"`
@@ -84,6 +86,30 @@ func NewRoomManager(store db.PostgresDocumentStore) *RoomManager {
 		rooms: make(map[string]*Room),
 		Store: store,
 	}
+}
+
+type Ack struct {
+	Type      string `json:"type"`  // "ack"
+	Event     string `json:"event"` // "snapshot"
+	Seq       uint64 `json:"seq,omitempty"`
+	Timestamp int64  `json:"ts"`
+}
+
+func (r *Room) SendAck(c *Client, ack Ack, sendClientID string) {
+	data, _ := json.Marshal(ack)
+
+	r.mutex.RLock()
+	for _, client := range r.Clients {
+		if client.ID == sendClientID {
+			select {
+			case c.Send <- data:
+			default:
+				// drop on slow client
+			}
+			break
+		}
+	}
+	r.mutex.RUnlock()
 }
 
 // GetOrCreateRoom gets an existing room or creates a new one

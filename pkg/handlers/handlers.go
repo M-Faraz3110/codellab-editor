@@ -118,6 +118,7 @@ func (h *Handlers) readPump(c *room.Client) {
 			}
 			break
 		}
+		log.Println("message: " + string(message))
 
 		// Parse message
 		var msg map[string]interface{}
@@ -254,8 +255,8 @@ func (h *Handlers) handleInit(client *room.Client, msg map[string]interface{}) {
 }
 
 func (h *Handlers) handleDocUpdate(client *room.Client, msg map[string]interface{}) {
-	_, okt := msg["title"].(string)
-	_, okl := msg["language"].(string)
+	title, okt := msg["title"].(string)
+	language, okl := msg["language"].(string)
 
 	if !okt || !okl {
 		log.Printf("Invalid update format")
@@ -264,11 +265,14 @@ func (h *Handlers) handleDocUpdate(client *room.Client, msg map[string]interface
 
 	update := &room.MetadataUpdate{
 		Type:      "document_update",
-		Title:     msg["title"].(string),
-		Language:  msg["language"].(string),
+		Title:     title,
+		Language:  language,
 		ClientID:  client.ID,
 		Timestamp: time.Now().UnixNano(),
 	}
+
+	client.Room.Document.Title = title
+	client.Room.Document.Language = language
 
 	client.Room.BroadcastMetadataUpdate(update, client.ID)
 
@@ -294,9 +298,18 @@ func (h *Handlers) handleSnapshot(client *room.Client, msg room.Snapshot) {
 		Timestamp: time.Now().UnixNano(),
 	}
 
-	client.Room.BroadcastSnapshotUpdate(snapshot, client.ID)
+	client.Room.Document.Content = msg.Content
 
 	h.updateDocumentSnapshot(client.Room, snapshot)
+
+	client.Room.BroadcastSnapshotUpdate(snapshot, client.ID)
+
+	client.Room.SendAck(client, room.Ack{
+		Type:      "ack",
+		Event:     "snapshot",
+		Seq:       msg.Seq,
+		Timestamp: time.Now().UnixNano(),
+	}, client.ID)
 }
 
 func (h *Handlers) handlePresence(client *room.Client, msg map[string]interface{}) {
@@ -371,9 +384,7 @@ func (h *Handlers) updateDocumentMetadata(room *room.Room, update *room.Metadata
 func (h *Handlers) updateDocumentSnapshot(room *room.Room, snapshot *room.Snapshot) {
 	room.Document.Version++
 	updates := db.DocumentUpdate{
-		Title:    &room.Document.Title,
-		Content:  &snapshot.Content,
-		Language: &room.Document.Language,
+		Content: &snapshot.Content,
 	}
 
 	_, err := h.roomManager.Store.UpdateDocument(room.ID, &updates)
