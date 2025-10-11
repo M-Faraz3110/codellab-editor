@@ -5,6 +5,8 @@ Provides a WebSocket server for low-latency collaborative editing plus HTTP endp
 
 Deployed on Render for now: https://codellab-editor.onrender.com
 
+![Demo](./demo.gif)
+
 ## Features
 
 - **Real-time Collaboration**: Multiple users can edit the same document simultaneously
